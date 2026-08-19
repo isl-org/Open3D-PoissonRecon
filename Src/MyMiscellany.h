@@ -463,6 +463,15 @@ struct ThreadPool
 				_RemainingTasks = threads-1;
 				_JobIndex++;
 				_WaitingForWorkOrClose.notify_all();
+
+				// The pool owns threads-1 threads, numbered from one, so the
+				// calling thread has to run index zero itself. Otherwise the
+				// STATIC schedule, which strides by threads, would drop every
+				// chunk assigned to index zero.
+				lock.unlock();
+				_ThreadFunction( 0 );
+				lock.lock();
+
 				_DoneWithWork.wait( lock , [&]( void ){ return _RemainingTasks==0; } );
 			}
 		}
@@ -492,7 +501,9 @@ struct ThreadPool
 			// reset together with the pool.
 			_JobIndex = 0;
 			_Close = false;
-			for( unsigned int t=0 ; t<numThreads ; t++ ) _Threads[t] = std::thread( _ThreadInitFunction , t );
+			// Index zero is reserved for the thread calling Parallel_for, so
+			// the pool's threads are numbered from one.
+			for( unsigned int t=0 ; t<numThreads ; t++ ) _Threads[t] = std::thread( _ThreadInitFunction , t+1 );
 		}
 	}
 	static void Terminate( void )
