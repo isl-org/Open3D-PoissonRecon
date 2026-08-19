@@ -447,19 +447,32 @@ struct ThreadPool
 		}
 		else if( _ParallelType==THREAD_POOL )
 		{
-			unsigned int targetTasks = 0;
-			if( !SetAtomic( &_RemainingTasks , threads-1 , targetTasks ) )
+			std::unique_lock< std::mutex > lock( _Mutex );
+			if( _RemainingTasks )
 			{
+				lock.unlock();
 				WARN( "nested for loop, reverting to serial" );
 				for( size_t i=begin ; i<end ; i++ ) iterationFunction( 0 , i );
 			}
 			else
 			{
+				// Publish the job while holding the lock and advance the job
+				// counter, so that a thread which has not parked yet still
+				// picks the job up through the predicate in
+				// _ThreadInitFunction instead of missing the notification.
+				_RemainingTasks = threads-1;
+				_JobIndex++;
 				_WaitingForWorkOrClose.notify_all();
-				{
-					std::unique_lock< std::mutex > lock( _Mutex );
-					_DoneWithWork.wait( lock , [&]( void ){ return _RemainingTasks==0; } );
-				}
+
+				// The pool owns threads-1 threads, numbered from one, so the
+				// calling thread has to run index zero itself. Otherwise the
+				// STATIC schedule, which strides by threads, would drop every
+				// chunk assigned to index zero.
+				lock.unlock();
+				_ThreadFunction( 0 );
+				lock.lock();
+
+				_DoneWithWork.wait( lock , [&]( void ){ return _RemainingTasks==0; } );
 			}
 		}
 	}
@@ -471,7 +484,10 @@ struct ThreadPool
 		_ParallelType = parallelType;
 		if( _Threads.size() && !_Close )
 		{
-			_Close = true;
+			{
+				std::lock_guard< std::mutex > lock( _Mutex );
+				_Close = true;
+			}
 			_WaitingForWorkOrClose.notify_all();
 			for( unsigned int t=0 ; t<_Threads.size() ; t++ ) _Threads[t].join();
 		}
@@ -481,15 +497,23 @@ struct ThreadPool
 		if( _ParallelType==THREAD_POOL )
 		{
 			_RemainingTasks = 0;
+			// Threads start out having run job zero, so the counter has to be
+			// reset together with the pool.
+			_JobIndex = 0;
 			_Close = false;
-			for( unsigned int t=0 ; t<numThreads ; t++ ) _Threads[t] = std::thread( _ThreadInitFunction , t );
+			// Index zero is reserved for the thread calling Parallel_for, so
+			// the pool's threads are numbered from one.
+			for( unsigned int t=0 ; t<numThreads ; t++ ) _Threads[t] = std::thread( _ThreadInitFunction , t+1 );
 		}
 	}
 	static void Terminate( void )
 	{
 		if( _Threads.size() && !_Close )
 		{
-			_Close = true;
+			{
+				std::lock_guard< std::mutex > lock( _Mutex );
+				_Close = true;
+			}
 			_WaitingForWorkOrClose.notify_all();
 			for( unsigned int t=0 ; t<_Threads.size() ; t++ ) _Threads[t].join();
 			_Threads.resize( 0 );
@@ -509,11 +533,21 @@ private:
 	}
 	static void _ThreadInitFunction( unsigned int thread )
 	{
-		// Wait for the first job to come in
 		std::unique_lock< std::mutex > lock( _Mutex );
-		_WaitingForWorkOrClose.wait( lock );
-		while( !_Close )
+		// Index of the last job this thread ran. It starts at zero rather than
+		// at the current value of _JobIndex so that a thread which is slow to
+		// start still runs the job that is already in flight: Parallel_for
+		// cannot return before every thread has run it.
+		unsigned int jobIndex = 0;
+		while( true )
 		{
+			// Waiting on a predicate, rather than on a bare wait, makes this
+			// immune both to a notification sent before this thread parked and
+			// to spurious wake-ups.
+			_WaitingForWorkOrClose.wait( lock , [&]( void ){ return _Close || _JobIndex!=jobIndex; } );
+			if( _Close ) return;
+			jobIndex = _JobIndex;
+
 			lock.unlock();
 			// do the job
 			_ThreadFunction( thread );
@@ -522,12 +556,12 @@ private:
 			lock.lock();
 			_RemainingTasks--;
 			if( !_RemainingTasks ) _DoneWithWork.notify_all();
-			_WaitingForWorkOrClose.wait( lock );
 		}
 	}
 
 	static bool _Close;
 	static volatile unsigned int _RemainingTasks;
+	static unsigned int _JobIndex;
 	static std::mutex _Mutex;
 	static std::condition_variable _WaitingForWorkOrClose , _DoneWithWork;
 	static std::vector< std::thread > _Threads;
@@ -539,6 +573,7 @@ size_t ThreadPool::DefaultChunkSize = 128;
 ThreadPool::ScheduleType ThreadPool::DefaultSchedule = ThreadPool::DYNAMIC;
 bool ThreadPool::_Close;
 volatile unsigned int ThreadPool::_RemainingTasks;
+unsigned int ThreadPool::_JobIndex;
 std::mutex ThreadPool::_Mutex;
 std::condition_variable ThreadPool::_WaitingForWorkOrClose;
 std::condition_variable ThreadPool::_DoneWithWork;
