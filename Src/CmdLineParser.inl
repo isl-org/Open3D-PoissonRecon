@@ -29,9 +29,9 @@ DAMAGE.
 #include <cassert>
 #include <string.h>
 
-#if defined( WIN32 ) || defined( _WIN64 )
+#if defined( _WIN32 ) || defined( _WIN64 )
 inline int strcasecmp( const char* c1 , const char* c2 ){ return _stricmp( c1 , c2 ); }
-#endif // WIN32 || _WIN64
+#endif // _WIN32 || _WIN64
 
 template< > void cmdLineCleanUp< int    >( int*    t ){ }
 template< > void cmdLineCleanUp< float  >( float*  t ){ }
@@ -48,29 +48,29 @@ template< > void cmdLineWriteValue< char*  >( char*  t , char* str ){ if( t ) sp
 template< > int    cmdLineCopy( int    t ){ return t;  }
 template< > float  cmdLineCopy( float  t ){ return t;  }
 template< > double cmdLineCopy( double t ){ return t;  }
-#if defined( WIN32 ) || defined( _WIN64 )
+#if defined( _WIN32 ) || defined( _WIN64 )
 template< > char*  cmdLineCopy( char* t ){ return _strdup( t ); }
-#else // !WIN32 && !_WIN64
+#else // !_WIN32 && !_WIN64
 template< > char*  cmdLineCopy( char* t ){ return strdup( t ); }
-#endif // WIN32 || _WIN64
+#endif // _WIN32 || _WIN64
 template< > int    cmdLineStringToType( const char* str ){ return atoi( str ); }
 template< > float  cmdLineStringToType( const char* str ){ return float( atof( str ) ); }
 template< > double cmdLineStringToType( const char* str ){ return double( atof( str ) ); }
-#if defined( WIN32 ) || defined( _WIN64 )
+#if defined( _WIN32 ) || defined( _WIN64 )
 template< > char*  cmdLineStringToType( const char* str ){ return _strdup( str ); }
-#else // !WIN32 && !_WIN64
+#else // !_WIN32 && !_WIN64
 template< > char*  cmdLineStringToType( const char* str ){ return  strdup( str ); }
-#endif // WIN32 || _WIN64
+#endif // _WIN32 || _WIN64
 
 
 /////////////////////
 // cmdLineReadable //
 /////////////////////
-#if defined( WIN32 ) || defined( _WIN64 )
+#if defined( _WIN32 ) || defined( _WIN64 )
 inline cmdLineReadable::cmdLineReadable( const char *name ) : set(false) { this->name = _strdup( name ); }
-#else // !WIN32 && !_WIN64
+#else // !_WIN32 && !_WIN64
 inline cmdLineReadable::cmdLineReadable( const char *name ) : set(false) { this->name =  strdup( name ); }
-#endif // WIN32 || _WIN64
+#endif // _WIN32 || _WIN64
 
 inline cmdLineReadable::~cmdLineReadable( void ){ if( name ) free( name ) ; name = NULL; }
 inline int cmdLineReadable::read( char** , int ){ set = true ; return 0; }
